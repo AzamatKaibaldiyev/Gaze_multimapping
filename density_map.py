@@ -7,6 +7,7 @@ import argparse
 import os
 from wand.api import library
 from wand.image import Image
+from wand.color import Color
 
 
 def process_data(tsv_file_path, image_size):
@@ -72,7 +73,6 @@ def create_density_map(tsv_file_path, output_path_density_map, path_referenceIma
     create_inflation_map(image, path_referenceImage, inflation_coords, output_path_expansion_map, height, width)
 
 
-
 def project_array_to_pixel(coords ,step, square_size, height, width):
     y,x = coords
     if len(x)>1:
@@ -104,7 +104,7 @@ def find_inflation_points(density_map_orig):
     smaller_map_modif = np.copy(smaller_map)
     print("Smaller map size: ", smaller_map.shape)
     # How far the values should be included
-    smaller_window = round(divison_factor/5) #* int(square_size/step) 
+    smaller_window = round(divison_factor/7) #* int(square_size/step) 
     print(f"How far you look: {smaller_window} or square of {(smaller_window*2+1)*step} pixel size ")
 
     
@@ -157,7 +157,7 @@ def find_inflation_points(density_map_orig):
 
     # Get the coordinates and magnitude for creating expanding effect on the image
     inflation_points = []
-    for val in sorted(np.unique(smaller_map_modif)):
+    for val in sorted(np.unique(smaller_map_modif), reverse = True):
         if val!=0:
             inflation_points.append([val, project_array_to_pixel(np.where(smaller_map_modif==val), step, square_size,height, width)])
     print(inflation_points)
@@ -168,103 +168,143 @@ def find_inflation_points(density_map_orig):
 
 def create_inflation_map(image, path_referenceImage, inflation_coords, output_path_expansion_map, height, width):
 
-        highest_magn = inflation_coords[-1][0]
-        for i, (magnitude, coords) in enumerate(inflation_coords):
-            if i == 0:
-                file_path = path_referenceImage
-            else:
-                file_path = output_path_expansion_map
+    with Image(filename=path_referenceImage) as img:
+        # Grab image size
+        width, height = img.size #cols - x, rows - y
 
+        # Calculate the increase in size (10% on each side)
+        increase_width = int(width* 0.2)
+        increase_height = int(height * 0.2)
+
+        # Create a new image with increased size and white background
+        new_width = width + 2 * increase_width
+        new_height = height + 2 * increase_height
+        new_image = Image(width=new_width, height=new_height, background=Color("white"))
+
+        ratio_size =  width/new_width * 0.85
+        print(ratio_size)
+
+        # Composite the original image onto the new image
+        composite_position = (increase_width, increase_height)
+        new_image.composite(img, composite_position[0], composite_position[1])
+        img = new_image
+
+        highest_magn = inflation_coords[-1][0]
+
+        for i, (magnitude, coords) in enumerate(inflation_coords):
             y,x = coords
+            
+            # If several points of the same magnitude is present
             if coords.shape!=(2,):
                 for y_coord, x_coord in zip(y, x):
-                    with Image(filename=file_path) as img:
                         #print(f"{y_coord/height:.3f},{x_coord/width:.3f}")
 
-                        # with Image(filename=path_referenceImage) as img:
-                        # Grab image size
-                        cols, rows = img.size
-                        # Define our target location ... say 1/3rd, by 1/5th
-                        ty, tx = int(y_coord), int(y_coord)
+                        # Define the target location 
+                        ty, tx = int(y_coord)+increase_height, int(y_coord)+increase_width
                         # Find middle of the image.
-                        mx, my = cols // 2, rows // 2
-                        # Roll target coord into middle
-                        ok = library.MagickRollImage(img.wand, mx-tx, my-ty)
-                        if not ok:
-                            img.raise_exception()
+                        mx, my = new_width // 2, new_height // 2
+                        img.options['filter'] = 'point'
+                        # Increase viewpoint to allow pixels to move out-of-bounds.
+                        viewport = '{0}x{1}+{2}+{3}'.format(tx*2+new_width, ty*2+new_height, tx, ty)
+                        img.options['distort:viewpoint'] = viewport
+                        img.virtual_pixel = 'tile'
+                        # Distort target coords to middle of image.
+                        img.distort(method='scale_rotate_translate',
+                                    arguments=[tx, ty, 1, 0, mx, my])
                         # Implode
-                        img.implode(-magnitude/highest_magn)
-                        # Roll middle back into place.
-                        ok = library.MagickRollImage(img.wand, mx+tx, my+ty)
-                        if not ok:
-                            img.raise_exception()
+                        img.implode(-magnitude/highest_magn * ratio_size)
+                        # Distort middle back into place.
+                        img.distort(method='scale_rotate_translate',
+                                    arguments=[mx, my, 1, 0, tx, ty])
+                        # Restore original image size.
+                        img.extent(width=new_width, height=new_height)
                         # done
-                        img.save(filename=output_path_expansion_map)
+                        #img.save(filename=output_path_expansion_map)
 
+            # If there is only single value of correspnding magnitude
             else:
-                with Image(filename=file_path) as img:
-                    #print(f"{y/height:.3f}, {x/width:.3f}")
-
-                    # with Image(filename=path_referenceImage) as img:
-                    # Grab image size
-                    cols, rows = img.size
-                    # Define our target location ... say 1/3rd, by 1/5th
-                    ty, tx = int(y), int(x)
+                    # Define the target location 
+                    ty, tx = int(y)+increase_height, int(x)+increase_width
                     # Find middle of the image.
-                    mx, my = cols // 2, rows // 2
-                    # Roll target coord into middle
-                    ok = library.MagickRollImage(img.wand, mx-tx, my-ty)
-                    if not ok:
-                        img.raise_exception()
+                    mx, my = new_width // 2, new_height // 2
+                    img.options['filter'] = 'point'
+                    # Increase viewpoint to allow pixels to move out-of-bounds.
+                    viewport = '{0}x{1}+{2}+{3}'.format(tx*2+new_width, ty*2+new_height, tx, ty)
+                    img.options['distort:viewpoint'] = viewport
+                    img.virtual_pixel = 'tile'
+                    # Distort target coords to middle of image.
+                    img.distort(method='scale_rotate_translate',
+                                arguments=[tx, ty, 1, 0, mx, my])
                     # Implode
-                    img.implode(-magnitude/highest_magn)
-                    # Roll middle back into place.
-                    ok = library.MagickRollImage(img.wand, mx+tx, my+ty)
-                    if not ok:
-                        img.raise_exception()
-                    # done
-                    img.save(filename=output_path_expansion_map)
+                    img.implode(-magnitude/highest_magn * ratio_size)
+                    # Distort middle back into place.
+                    img.distort(method='scale_rotate_translate',
+                                arguments=[mx, my, 1, 0, tx, ty])
+                    # Restore original image size.
+                    img.extent(width=new_width, height=new_height)
+                    # Save the image 
+                    #img.save(filename=output_path_expansion_map)
 
-
+        img.save(filename=output_path_expansion_map)
 
 # def create_inflation_map(image, path_referenceImage, inflation_coords, output_path_expansion_map, height, width):
 
-#     with Image(filename=path_referenceImage) as img:
-
 #         highest_magn = inflation_coords[-1][0]
+#         for i, (magnitude, coords) in enumerate(inflation_coords):
+#             if i == 0:
+#                 file_path = path_referenceImage
+#             else:
+#                 file_path = output_path_expansion_map
 
-#         for magnitude, coords in inflation_coords:
 #             y,x = coords
-#             print(y/height,x/width)
+#             if coords.shape!=(2,):
+#                 for y_coord, x_coord in zip(y, x):
+#                     with Image(filename=file_path) as img:
+#                         #print(f"{y_coord/height:.3f},{x_coord/width:.3f}")
 
-#             # with Image(filename=path_referenceImage) as img:
-#             # Grab image size
-#             cols, rows = img.size
-#             # Define our target location ... say 1/3rd, by 1/5th
-#             # tx, ty = int(cols * 0.1), int(rows * 0.1)
-#             ty, tx = y, x
-#             # Find middle of the image.
-#             mx, my = cols // 2, rows // 2
-#             img.options['filter'] = 'point'
-#             # Increase viewpoint to allow pixels to move out-of-bounds.
-#             viewport = '{0}x{1}+{2}+{3}'.format(tx*2+cols, ty*2+rows, tx, ty)
-#             img.options['distort:viewpoint'] = viewport
-#             img.virtual_pixel = 'tile'
-#             # Distort target coords to middle of image.
-#             img.distort(method='scale_rotate_translate',
-#                         arguments=[tx, ty, 1, 0, mx, my])
-#             # Implode
-#             img.implode(-magnitude/highest_magn)
-#             # Distort middle back into place.
-#             img.distort(method='scale_rotate_translate',
-#                         arguments=[mx, my, 1, 0, tx, ty])
-#             # Restore original image size.
-#             img.extent(width=cols, height=rows)
-#             # done
-#             img.save(filename=output_path_expansion_map)
-#             sys.exit()
+#                         # with Image(filename=path_referenceImage) as img:
+#                         # Grab image size
+#                         cols, rows = img.size
+#                         # Define our target location ... say 1/3rd, by 1/5th
+#                         ty, tx = int(y_coord), int(y_coord)
+#                         # Find middle of the image.
+#                         mx, my = cols // 2, rows // 2
+#                         # Roll target coord into middle
+#                         ok = library.MagickRollImage(img.wand, mx-tx, my-ty)
+#                         if not ok:
+#                             img.raise_exception()
+#                         # Implode
+#                         img.implode(-magnitude/highest_magn)
+#                         # Roll middle back into place.
+#                         ok = library.MagickRollImage(img.wand, mx+tx, my+ty)
+#                         if not ok:
+#                             img.raise_exception()
+#                         # done
+#                         img.save(filename=output_path_expansion_map)
 
-#         # img.save(filename=output_path_expansion_map)
+#             else:
+#                 with Image(filename=file_path) as img:
+#                     #print(f"{y/height:.3f}, {x/width:.3f}")
+
+#                     # with Image(filename=path_referenceImage) as img:
+#                     # Grab image size
+#                     cols, rows = img.size
+#                     # Define our target location ... say 1/3rd, by 1/5th
+#                     ty, tx = int(y), int(x)
+#                     # Find middle of the image.
+#                     mx, my = cols // 2, rows // 2
+#                     # Roll target coord into middle
+#                     ok = library.MagickRollImage(img.wand, mx-tx, my-ty)
+#                     if not ok:
+#                         img.raise_exception()
+#                     # Implode
+#                     img.implode(-magnitude/highest_magn)
+#                     # Roll middle back into place.
+#                     ok = library.MagickRollImage(img.wand, mx+tx, my+ty)
+#                     if not ok:
+#                         img.raise_exception()
+#                     # done
+#                     img.save(filename=output_path_expansion_map)
 
 
 
