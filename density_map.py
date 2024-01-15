@@ -53,18 +53,18 @@ def create_density_map(tsv_file_path, output_path_density_map, path_referenceIma
                     density_map[i, j] += 1
 
 
-    # Step 3: Overlay the Density Map on the Image
-    # Normalize the density map for overlay
-    density_map_normalized = cv2.normalize(density_map, None, 0, 255, cv2.NORM_MINMAX)
+    # # Step 3: Overlay the Density Map on the Image
+    # # Normalize the density map for overlay
+    # density_map_normalized = cv2.normalize(density_map, None, 0, 255, cv2.NORM_MINMAX)
 
-    # Convert density map to 3 channels (for RGB)
-    density_map_colored = cv2.applyColorMap(np.uint8(density_map_normalized), cv2.COLORMAP_JET)
+    # # Convert density map to 3 channels (for RGB)
+    # density_map_colored = cv2.applyColorMap(np.uint8(density_map_normalized), cv2.COLORMAP_JET)
 
-    # Overlay the density map on top of the image with transparency
-    overlay = cv2.addWeighted(image, 0.5, density_map_colored, 0.5, 0)
+    # # Overlay the density map on top of the image with transparency
+    # overlay = cv2.addWeighted(image, 0.5, density_map_colored, 0.5, 0)
 
-    # Save the overlaid image
-    cv2.imwrite(output_path_density_map , overlay)
+    # # Save the overlaid image
+    # cv2.imwrite(output_path_density_map , overlay)
 
     # Creating the expansion map
     inflation_coords = find_inflation_points(density_map_orig)
@@ -76,16 +76,16 @@ def create_density_map(tsv_file_path, output_path_density_map, path_referenceIma
 def project_array_to_pixel(coords ,step, square_size, height, width):
     y,x = coords
     if len(x)>1:
-        return [(min(height, y_val*step)+square_size/2, min(width, x_val*step)+square_size/2) for y_val,x_val in zip(y,x)]
+        return np.transpose(np.array([(min(height, y_val*step)+square_size/2, min(width, x_val*step)+square_size/2) for y_val,x_val in zip(y,x)]))
     else:
-        return (min(height, y*step)+square_size/2, min(width, x*step)+square_size/2)
+        return np.array((min(height, y[0]*step)+square_size/2, min(width, x[0]*step)+square_size/2))
 
 
 
 def find_inflation_points(density_map_orig):
 
     (height, width) = density_map_orig.shape
-    print(density_map_orig.shape)
+    print("Size of the ref image: ", density_map_orig.shape)
     divison_factor = 20
     square_size = int(min(width/divison_factor, height/divison_factor))
     width_resid = square_size - width%square_size
@@ -102,32 +102,46 @@ def find_inflation_points(density_map_orig):
     smaller_width = int(padded_map.shape[1]/step)
     smaller_map = np.zeros((smaller_height, smaller_width))
     smaller_map_modif = np.copy(smaller_map)
+    print("Smaller map size: ", smaller_map.shape)
+    # How far the values should be included
+    smaller_window = round(divison_factor/5) #* int(square_size/step) 
+    print(f"How far you look: {smaller_window} or square of {(smaller_window*2+1)*step} pixel size ")
+
     
+    #Iterate vertically and horizontally over an array
     for y in range(0, height, step):
         for x in range(0, width, step):
             window_sum = np.sum(padded_map[y:y+square_size, x:x+square_size])
-            smaller_map[int(y/step), int(x/step)] = window_sum
+            smaller_map[round(y/step), round(x/step)] = window_sum
 
     # Process smaller map
+    # Get the unique values from the map exluding 0
     uniq_vals = np.array(sorted(np.unique(smaller_map)))
     uniq_vals = uniq_vals[uniq_vals != 0]
+
+    # Iterate through and find their coordinates in the smaller map 
     for val in uniq_vals:
         coords_indices = np.where(smaller_map==val)
         coords_indices_list = list(zip(coords_indices[0], coords_indices[1]))
 
+        #
         for (y,x) in coords_indices_list:
-            smaller_window = int(divison_factor/4)  * int(square_size/step) 
+            
             cutted_map = np.copy(smaller_map[max(0, y-smaller_window):min(smaller_height,y+smaller_window), max(x-smaller_window,0):min(smaller_width, x+smaller_window)])
             
+            # Create copies for finding highest neighbour around current position
             smaller_map_copy = np.copy(smaller_map)
             smaller_map_copy[y,x]=0
             cutted_map_copy = smaller_map_copy[max(0, y-smaller_window):min(smaller_height,y+smaller_window), max(x-smaller_window,0):min(smaller_width, x+smaller_window)]
             highest_neighbor = np.max(cutted_map_copy)
 
+            # If it is smaller than the highest neighbour, put zero in new map at its position
             if smaller_map[y,x] < highest_neighbor:
                 smaller_map_modif[y,x] = 0
+            # If higher, sum neighbourhood and put it in new map at its position
             elif smaller_map[y,x] > highest_neighbor:
                 smaller_map_modif[y,x] = np.sum(cutted_map)
+            # If it is equal to the highest neighbour, put zero in new map at its position, sum neighbourhood and put it at mean position between highest neigbours
             else:
                 temp_map = np.zeros(padded_map.shape)
                 temp_map[max(0, y-smaller_window):min(smaller_height,y+smaller_window), max(x-smaller_window,0):min(smaller_width, x+smaller_window)] = np.copy(cutted_map)
@@ -137,10 +151,11 @@ def find_inflation_points(density_map_orig):
                 smaller_map_modif[y,x] = 0
                 smaller_map_modif[cutted_y,cutted_x] = np.sum(cutted_map)
 
+    # Filter out values less than threshold (% of max value)
     highest_val = np.max(smaller_map_modif)
-    smaller_map_modif[smaller_map_modif < 0.25 * highest_val] = 0
+    smaller_map_modif[smaller_map_modif < 0.5 * highest_val] = 0
 
-    # Coordinations for expansion with magnitude
+    # Get the coordinates and magnitude for creating expanding effect on the image
     inflation_points = []
     for val in sorted(np.unique(smaller_map_modif)):
         if val!=0:
@@ -161,11 +176,10 @@ def create_inflation_map(image, path_referenceImage, inflation_coords, output_pa
                 file_path = output_path_expansion_map
 
             y,x = coords
-
-            if len(x)>1:
+            if coords.shape!=(2,):
                 for y_coord, x_coord in zip(y, x):
                     with Image(filename=file_path) as img:
-                        print(f"{y_coord/height:.3f},{x_coord/width:3.f}")
+                        #print(f"{y_coord/height:.3f},{x_coord/width:.3f}")
 
                         # with Image(filename=path_referenceImage) as img:
                         # Grab image size
@@ -189,13 +203,13 @@ def create_inflation_map(image, path_referenceImage, inflation_coords, output_pa
 
             else:
                 with Image(filename=file_path) as img:
-                    print(f"{y/height:.3f}, {x/width:.3f}")
+                    #print(f"{y/height:.3f}, {x/width:.3f}")
 
                     # with Image(filename=path_referenceImage) as img:
                     # Grab image size
                     cols, rows = img.size
                     # Define our target location ... say 1/3rd, by 1/5th
-                    ty, tx = int(y[0]), int(x[0])
+                    ty, tx = int(y), int(x)
                     # Find middle of the image.
                     mx, my = cols // 2, rows // 2
                     # Roll target coord into middle
