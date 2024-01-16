@@ -31,9 +31,8 @@ def find_matches(reference_image, frame, sift, flann, img_name):
 
     try: 
         matches = flann.knnMatch(des1, des2, k=2)
-
-        outt_path = '/Users/azamatkaibaldiyev/GREYC_project/Tobii2_myvideos/grc73it/recordings/zs7is5l/segments/1/Result_outputs/Preprocessed_divided/'
-        cv2.imwrite(os.path.join(outt_path, 'last_frame.jpeg'), frame_gray)
+        #outt_path = '/Users/azamatkaibaldiyev/GREYC_project/Tobii2_myvideos/grc73it/recordings/zs7is5l/segments/1/Result_outputs/Preprocessed_divided/'
+        #cv2.imwrite(os.path.join(outt_path, 'last_frame.jpeg'), frame_gray)
 
         # Apply ratio test to get good matches
         good_matches = []

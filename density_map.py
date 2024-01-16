@@ -212,7 +212,7 @@ def create_inflation_map(image, path_referenceImage, inflation_coords, output_pa
                         img.distort(method='scale_rotate_translate',
                                     arguments=[tx, ty, 1, 0, mx, my])
                         # Implode
-                        img.implode(-magnitude/highest_magn * ratio_size)
+                        img.implode(amount=-magnitude/highest_magn * ratio_size) #, method = 'average')
                         # Distort middle back into place.
                         img.distort(method='scale_rotate_translate',
                                     arguments=[mx, my, 1, 0, tx, ty])
@@ -236,7 +236,7 @@ def create_inflation_map(image, path_referenceImage, inflation_coords, output_pa
                     img.distort(method='scale_rotate_translate',
                                 arguments=[tx, ty, 1, 0, mx, my])
                     # Implode
-                    img.implode(-magnitude/highest_magn * ratio_size)
+                    img.implode(amount=-magnitude/highest_magn * ratio_size )#,method = 'average')
                     # Distort middle back into place.
                     img.distort(method='scale_rotate_translate',
                                 arguments=[mx, my, 1, 0, tx, ty])
